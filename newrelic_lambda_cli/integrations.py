@@ -27,8 +27,8 @@ def get_role(session, role_name):
         raise click.UsageError(str(e))
 
 
-def check_for_ingest_stack(session):
-    return get_cf_stack_status(session, "NewRelicLogIngestion")
+def check_for_ingest_stack(session, resource_prefix=None):
+    return get_cf_stack_status(session, get_resource_name("NewRelicLogIngestion", resource_prefix=resource_prefix))
 
 
 def get_cf_stack_status(session, stack_name):
@@ -48,11 +48,24 @@ def get_cf_stack_status(session, stack_name):
         return res["Stacks"][0]["StackStatus"]
 
 
+def get_resource_name(base_resource_name, nr_account_id=None, resource_prefix=None, suffix_char='-', prefix_char='-'):
+    if resource_prefix and nr_account_id:
+        return "%s%s%s%s%d" % (resource_prefix, prefix_char, base_resource_name, suffix_char, nr_account_id)
+
+    if nr_account_id and not resource_prefix:
+        return "%s%s%d" % (base_resource_name, suffix_char, nr_account_id)
+
+    if resource_prefix and not nr_account_id:
+        return "%s%s%s" % (resource_prefix, suffix_char, base_resource_name)
+
+    return base_resource_name
+
+
 # TODO: Merge this with create_integration_role?
-def create_role(session, role_policy, nr_account_id):
+def create_role(session, role_policy, nr_account_id, resource_prefix=None):
     client = session.client("cloudformation")
     role_policy_name = "" if role_policy is None else role_policy
-    stack_name = "NewRelicLambdaIntegrationRole-%d" % nr_account_id
+    stack_name = get_resource_name('NewRelicLambdaIntegrationRole', nr_account_id, resource_prefix)
     template_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         "templates",
@@ -76,9 +89,9 @@ def create_role(session, role_policy, nr_account_id):
         click.echo("Done")
 
 
-def create_log_ingestion_function(session, nr_license_key, enable_logs=False):
+def create_log_ingestion_function(session, nr_license_key, enable_logs=False, resource_prefix=None):
     client = session.client("cloudformation")
-    stack_name = "NewRelicLogIngestion"
+    stack_name = get_resource_name("NewRelicLogIngestion", resource_prefix=resource_prefix)
     template_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         "templates",
@@ -108,9 +121,9 @@ def create_log_ingestion_function(session, nr_license_key, enable_logs=False):
         success("Done")
 
 
-def remove_log_ingestion_function(session):
+def remove_log_ingestion_function(session, resource_prefix=None):
     client = session.client("cloudformation")
-    stack_name = "NewRelicLogIngestion"
+    stack_name = get_resource_name("NewRelicLogIngestion", resource_prefix=resource_prefix)
     stack_status = check_for_ingest_stack(session)
     if stack_status is None:
         click.echo(
@@ -127,20 +140,20 @@ def remove_log_ingestion_function(session):
     success("Done")
 
 
-def create_integration_role(session, role_policy, nr_account_id):
+def create_integration_role(session, role_policy, nr_account_id, resource_prefix=None):
     """
     Creates a AWS CloudFormation stack that adds the New Relic AWSLambda Integration
     IAM role.
    """
-    role_name = "NewRelicLambdaIntegrationRole_%s" % nr_account_id
-    stack_name = "NewRelicLambdaIntegrationRole-%s" % nr_account_id
+    role_name = get_resource_name("NewRelicLambdaIntegrationRole", nr_account_id=nr_account_id, resource_prefix=resource_prefix, suffix_char='_')
+    stack_name = get_resource_name("NewRelicLambdaIntegrationRole", nr_account_id=nr_account_id, resource_prefix=resource_prefix)
     role = get_role(session, role_name)
     if role:
         success("New Relic AWS Lambda integration role '%s' already exists" % role_name)
         return role
     stack_status = get_cf_stack_status(session, stack_name)
     if stack_status is None:
-        create_role(session, role_policy, nr_account_id)
+        create_role(session, role_policy, nr_account_id, resource_prefix)
         role = get_role(session, role_name)
         success(
             "Created role [%s] with policy [%s] in AWS account."
@@ -159,7 +172,10 @@ def remove_integration_role(session, nr_account_id):
     IAM role.
     """
     client = session.client("cloudformation")
-    stack_name = "NewRelicLambdaIntegrationRole-%s" % nr_account_id
+
+    # TODO: add resource_prefix to function parameter
+    resource_prefix = None
+    stack_name = get_resource_name("NewRelicLambdaIntegrationRole", nr_account_id=nr_account_id, resource_prefix=resource_prefix)
     stack_status = get_cf_stack_status(session, stack_name)
     if stack_status is None:
         click.echo("No New Relic AWS Lambda Integration found, skipping")
@@ -190,22 +206,23 @@ def validate_linked_account(session, gql, linked_account_name):
             )
 
 
-def install_log_ingestion(session, nr_license_key, enable_logs=False):
+def install_log_ingestion(session, nr_license_key, enable_logs=False, resource_prefix=None):
     """
     Installs the New Relic AWS Lambda log ingestion function and role.
 
     Returns True for success and False for failure.
     """
-    function = get_function(session, "newrelic-log-ingestion")
+    # TODO: ingestion function name also needs support for custom name
+    function = get_function(session, get_resource_name("newrelic-log-ingestion", resource_prefix=resource_prefix))
     if function is None:
-        stack_status = check_for_ingest_stack(session)
+        stack_status = check_for_ingest_stack(session, resource_prefix=resource_prefix)
         if stack_status is None:
             click.echo(
                 "Setting up 'newrelic-log-ingestion' function in region: %s"
                 % session.region_name
             )
             try:
-                create_log_ingestion_function(session, nr_license_key, enable_logs)
+                create_log_ingestion_function(session, nr_license_key, enable_logs, resource_prefix)
             except Exception as e:
                 failure("Failed to create 'newrelic-log-ingestion' function: %s" % e)
                 return False

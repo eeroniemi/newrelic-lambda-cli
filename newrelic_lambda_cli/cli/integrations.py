@@ -1,5 +1,6 @@
 import boto3
 import click
+import sys
 
 from newrelic_lambda_cli import api, integrations, permissions
 from newrelic_lambda_cli.cli.decorators import add_options, AWS_OPTIONS, NR_OPTIONS
@@ -38,6 +39,12 @@ def register(group):
     metavar="<name>",
     required=True,
 )
+@click.option(
+    "--resource-prefix",
+    help="AWS resource prefix",
+    metavar="<name>",
+    required=False,
+)
 @add_options(NR_OPTIONS)
 def install(
     aws_profile,
@@ -49,6 +56,7 @@ def install(
     nr_account_id,
     nr_api_key,
     nr_region,
+    resource_prefix=None
 ):
     """Install New Relic AWS Lambda Integration"""
     session = boto3.Session(profile_name=aws_profile, region_name=aws_region)
@@ -66,7 +74,7 @@ def install(
     integrations.validate_linked_account(session, gql_client, linked_account_name)
 
     click.echo("Creating the AWS role for the New Relic AWS Lambda Integration")
-    role = integrations.create_integration_role(session, aws_role_policy, nr_account_id)
+    role = integrations.create_integration_role(session, aws_role_policy, nr_account_id, resource_prefix)
 
     install_success = True
 
@@ -84,7 +92,7 @@ def install(
         install_success = res and install_success
 
     click.echo("Creating newrelic-log-ingestion Lambda function in AWS account")
-    res = integrations.install_log_ingestion(session, nr_license_key, enable_logs)
+    res = integrations.install_log_ingestion(session, nr_license_key, enable_logs, resource_prefix)
     install_success = res and install_success
 
     if install_success:
